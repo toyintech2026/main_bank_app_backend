@@ -1,4 +1,4 @@
-name: Bank Frontend Pipeline
+name: Bank Backend Pipeline
 
 on:
   push:
@@ -10,61 +10,73 @@ on:
 
 jobs:
   Continues-Integration_build_and_push:
-    runs-on: [self-hosted, docker, terraform]
+    runs-on: ubuntu-latest
+    env:
+      ECR_REGISTRY: 845042113977.dkr.ecr.eu-north-1.amazonaws.com
+      ECR_REPOSITORY: bank-backendapi
+      AWS_REGION: eu-north-1
+      IMAGE_TAG: ${{ github.run_number }}
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-      - name: Log in to awscli
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
 
-      - name: Build container image
-        run: docker build -t bank-app-frontend:latest .
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
 
-      - name: Log in to ECR with short-lived credentials
-        run: |
-          aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${{ vars.ECR_REPO }}
+    - name: Log in to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Tag Docker image
-        run: docker tag bank-app-frontend:latest ${{ vars.ECR_REPO }}/bank-frontend:${{ github.run_number }}
+    - name: Build Docker image
+      working-directory: ./main_bank_app_backend
+      run: |
+        docker build -t ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} .
+        docker tag ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest
+  
+    - name: Push Docker images to ECR
+      run: |
+        docker push ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+        docker push ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest
 
-      - name: Push image to ECR
-        run: docker push ${{ vars.ECR_REPO }}/bank-frontend:${{ github.run_number }}
+    - name: Clean up Docker images locally
+      if: always()
+      run: |
+        docker rmi ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} || true
+        docker rmi ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest || true
 
-      - name: Clean up Docker image locally
-        run: |
-          docker rmi bank-app-frontend:latest || true
-          docker rmi ${{ vars.ECR_REPO }}/bank-frontend:${{ github.run_number }} || true
-
+  
   Continues-Update_k8s_manifest:
-    runs-on: [self-hosted, docker, terraform]
+    runs-on: ubuntu-latest
     needs: Continues-Integration_build_and_push
-
+    env:
+      ECR_REGISTRY: 845042113977.dkr.ecr.eu-north-1.amazonaws.com
+      ECR_REPOSITORY: bank-backendapi
+      IMAGE_TAG: ${{ github.run_number }}
     steps:
-      - name: Checkout Kubernetes manifest repository
-        uses: actions/checkout@v4
-        with:
-          repository: toyintech2026/kubernetes-manifest
-          token: ${{ secrets.GIT_PASSWORD }}
-          ref: main
-          path: kubernetes-manifest
+    - name: Checkout repository
+      env:
+          GIT_USERNAME: ${{ secrets.GIT_USERNAME }}
+          GIT_PASSWORD: ${{ secrets.GIT_PASSWORD }}
+      run: |
+         git clone https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/pod9project/kubernetes-manifest.git
+         
+         cd kubernetes-manifest
+         git config --global user.email "pod9project@gmail.com"
+         git config --global user.name "pod9project"
 
-      - name: Update frontend image in manifest
-        run: |
-          cd kubernetes-manifest
+         sed -i "s+${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:.*+${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}+g" ./bank-project/backendapi.yaml
 
-          git config user.email "adetoyinife@gmail.com"
-          git config user.name "toyintech2026"
+         cat ./bank-project/backendapi.yaml | grep -q "${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}"
 
-          sed -i "s+${{ vars.ECR_REPO }}/bank-frontend:.*+${{ vars.ECR_REPO }}/bank-frontend:${{ github.run_number }}+g" ./bank-project/frontend.yaml
-
-          cat ./bank-project/frontend.yaml | grep -q "${{ vars.ECR_REPO }}/bank-frontend:${{ github.run_number }}"
-
-          git add bank-project/frontend.yaml
-          git commit -m "Update frontend image to version ${{ github.run_number }}" || echo "No manifest changes to commit"
-          git push origin main
+         git add bank-project/backendapi.yaml
+         git commit -m "Update backendapi image to version ${{ env.IMAGE_TAG }}"
+         git push origin main
+        
