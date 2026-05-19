@@ -83,5 +83,4 @@ jobs:
           git add bank-project/backendapi.yaml
           git commit -m "Update backendapi image to version ${{ env.IMAGE_TAG }}" || echo "No manifest changes to commit"
           git push origin main
-        
 
