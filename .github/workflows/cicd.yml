@@ -69,8 +69,8 @@ jobs:
          git clone https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/pod9project/kubernetes-manifest.git
          
          cd kubernetes-manifest
-         git config --global user.email "pod9project@gmail.com"
-         git config --global user.name "pod9project"
+         git config --global user.email "adetoyinife@gmail.com"
+         git config --global user.name "toyintech2026"
 
          sed -i "s+${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:.*+${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}+g" ./bank-project/backendapi.yaml
 
